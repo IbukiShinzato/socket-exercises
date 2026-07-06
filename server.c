@@ -24,6 +24,7 @@ static pthread_cond_t ct = PTHREAD_COND_INITIALIZER;
 /* Strings for methods */
 const char* get = "GET";
 const char* put = "PUT";
+const char* del = "DEL";
 const char* file = "FILE";
 const char* not_found = "NOT FOUND\n";
 const char* error = "PROTOCOL ERROR\n";
@@ -35,6 +36,7 @@ typedef enum
 {
     PROTOCOL_GET,
     PROTOCOL_PUT,
+    PROTOCOL_DEL,
     PROTOCOL_ERROR
 } protocol_t;
 
@@ -146,6 +148,47 @@ error:
     send(fd, error, strlen(error), 0);
 }
 
+/* Delete file */
+void delete_file(int fd, char* filename)
+{
+    char buf[BUFSIZE], pathname[BUFSIZE];
+
+    snprintf(buf, sizeof(buf), "%s/%s", home, filename);
+
+    if (realpath(buf, pathname) == NULL)
+    {
+        perror("realpath");
+        send(fd, not_found, strlen(not_found), 0);
+        return;
+    }
+
+    if (strncmp(pathname, home, strlen(home)) != 0) goto error;
+
+    size_t home_len = strlen(home);
+
+    if (strncmp(pathname, home, home_len) != 0 ||
+        (pathname[home_len] != '/' && pathname[home_len] != '\0'))
+    {
+        goto error;
+    }
+
+    if (unlink(pathname) < 0)
+    {
+        perror("unlink");
+        goto error;
+    }
+
+    snprintf(buf, sizeof(buf), "DEL: %s deleted", pathname);
+    send(fd, buf, strlen(buf), 0);
+
+    send(fd, "\n", 1, 0);
+
+    return;
+
+error:
+    send(fd, error, strlen(error), 0);
+}
+
 protocol_t parse_protocol(char* msg, int* pos)
 {
     if (strncmp(msg, get, strlen(get)) == 0)
@@ -158,6 +201,12 @@ protocol_t parse_protocol(char* msg, int* pos)
     {
         *pos = strlen(put);
         return PROTOCOL_PUT;
+    }
+
+    if (strncmp(msg, del, strlen(del)) == 0)
+    {
+        *pos = strlen(del);
+        return PROTOCOL_DEL;
     }
 
     return PROTOCOL_ERROR;
@@ -218,6 +267,10 @@ void resp_msg(int fd, char* msg, int len)
 
         case PROTOCOL_PUT:
             save_file(fd, filename, content);
+            break;
+
+        case PROTOCOL_DEL:
+            delete_file(fd, filename);
             break;
 
         default:
