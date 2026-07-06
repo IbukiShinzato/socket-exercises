@@ -12,14 +12,36 @@
 #define PORTNUM 8000
 #define BUFSIZE 4096
 
+int recv_until_newline(int fd)
+{
+    char response[BUFSIZE];
+    int ret;
+
+    while ((ret = recv(fd, response, BUFSIZE, 0)) > 0)
+    {
+        write(1, response, ret);
+
+        if (memchr(response, '\n', ret) != NULL)
+        {
+            return 0;
+        }
+    }
+
+    if (ret < 0)
+    {
+        perror("recv");
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     struct sockaddr_in saddr;
     int fd;
     char buf[BUFSIZE];
-    char response[BUFSIZE];
 
-    /* make server's socket */
     if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
     {
         perror("socket");
@@ -34,7 +56,8 @@ int main(void)
     if (connect(fd, (struct sockaddr*)&saddr, sizeof(saddr)) < 0)
     {
         perror("connect");
-        exit(-1);
+        close(fd);
+        return -1;
     }
 
     for (;;)
@@ -47,21 +70,18 @@ int main(void)
             break;
         }
 
-        send(fd, buf, strlen(buf), 0);
-        int ret = recv(fd, response, BUFSIZE, 0);
-
-        if (ret == 0)
+        if (send(fd, buf, strlen(buf), 0) < 0)
         {
-            break;
-        }
-
-        if (ret < 0)
-        {
-            perror("recv");
+            perror("send");
+            close(fd);
             return -1;
         }
 
-        write(1, response, ret);
+        if (recv_until_newline(fd) < 0)
+        {
+            close(fd);
+            return -1;
+        }
     }
 
     close(fd);
