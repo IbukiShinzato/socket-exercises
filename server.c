@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -25,8 +26,10 @@ static pthread_cond_t ct = PTHREAD_COND_INITIALIZER;
 const char* get = "GET";
 const char* put = "PUT";
 const char* del = "DEL";
+const char* ls = "LS";
 const char* file = "FILE";
 const char* not_found = "NOT FOUND\n";
+const char* not_permission = "NOT PERMISSION\n";
 const char* error = "PROTOCOL ERROR\n";
 
 /* Home directory name */
@@ -37,6 +40,7 @@ typedef enum
     PROTOCOL_GET,
     PROTOCOL_PUT,
     PROTOCOL_DEL,
+    PROTOCOL_LS,
     PROTOCOL_ERROR
 } protocol_t;
 
@@ -189,8 +193,56 @@ error:
     send(fd, error, strlen(error), 0);
 }
 
+void list_files(int fd)
+{
+    char response[BUFSIZE];
+    int pos = 0;
+
+    DIR* mydir;
+    struct dirent* myfile;
+
+    mydir = opendir(home);
+
+    if (mydir == NULL) goto error;
+
+    memset(response, 0, BUFSIZE);
+    while ((myfile = readdir(mydir)) != NULL)
+    {
+        if (pos >= BUFSIZE - 1)
+        {
+            break;
+        }
+
+        if (strcmp(myfile->d_name, ".") == 0 || strcmp(myfile->d_name, "..") == 0 ||
+            myfile->d_name[0] == '.')
+        {
+            continue;
+        }
+
+        snprintf(response + pos, BUFSIZE - pos, "%s\n", myfile->d_name);
+        while (pos < BUFSIZE && response[pos] != '\0')
+        {
+            pos += 1;
+        }
+    }
+
+    write(fd, response, pos);
+    closedir(mydir);
+
+    return;
+
+error:
+    send(fd, not_permission, strlen(not_permission), 0);
+}
+
 protocol_t parse_protocol(char* msg, int* pos)
 {
+    if (strncmp(msg, ls, strlen(ls)) == 0)
+    {
+        *pos = strlen(ls);
+        return PROTOCOL_LS;
+    }
+
     if (strncmp(msg, get, strlen(get)) == 0)
     {
         *pos = strlen(get);
@@ -223,6 +275,8 @@ void resp_msg(int fd, char* msg, int len)
     content[0] = '\0';
 
     protocol_t state = parse_protocol(msg, &pos);
+
+    if (state == PROTOCOL_LS) goto exec;
 
     if (state == PROTOCOL_ERROR) goto error;
 
@@ -259,6 +313,7 @@ void resp_msg(int fd, char* msg, int len)
         pos++;
     }
 
+exec:
     switch (state)
     {
         case PROTOCOL_GET:
@@ -271,6 +326,10 @@ void resp_msg(int fd, char* msg, int len)
 
         case PROTOCOL_DEL:
             delete_file(fd, filename);
+            break;
+
+        case PROTOCOL_LS:
+            list_files(fd);
             break;
 
         default:
